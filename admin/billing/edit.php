@@ -6,45 +6,62 @@ require_once '../../includes/functions.php';
 
 checkPermission([ROLE_SUPER_ADMIN, ROLE_ADMIN]);
 
+$invoice_id = intval($_GET['id'] ?? 0);
 $error = '';
 $success = '';
 
-// Fetch customers and billing records
-$customers_query = "SELECT c.id, c.customer_id, c.fullname, c.email, p.price FROM customers c LEFT JOIN packages p ON c.package_id = p.id WHERE c.status = 'Active'";
+if ($invoice_id <= 0) {
+    header('Location: index.php');
+    exit();
+}
+
+$query = "SELECT i.* FROM invoices i WHERE i.id = ?";
+$stmt = $conn->prepare($query);
+$stmt->bind_param('i', $invoice_id);
+$stmt->execute();
+$result = $stmt->get_result();
+
+if ($result->num_rows === 0) {
+    header('Location: index.php');
+    exit();
+}
+
+$invoice = $result->fetch_assoc();
+
+// Fetch customers
+$customers_query = "SELECT c.id, c.customer_id, c.fullname FROM customers c WHERE c.status = 'Active'";
 $customers_result = $conn->query($customers_query);
 $customers = $customers_result->fetch_all(MYSQLI_ASSOC);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $customer_id = intval($_POST['customer_id'] ?? 0);
-    $billing_id = intval($_POST['billing_id'] ?? 0);
-    $issue_date = sanitizeInput($_POST['issue_date'] ?? '');
     $due_date = sanitizeInput($_POST['due_date'] ?? '');
-    $amount = floatval($_POST['amount'] ?? 0);
     $discount = floatval($_POST['discount'] ?? 0);
     $tax = floatval($_POST['tax'] ?? 0);
+    $status = sanitizeInput($_POST['status'] ?? '');
     $notes = sanitizeInput($_POST['notes'] ?? '');
 
-    if (empty($customer_id) || empty($issue_date) || empty($due_date) || $amount <= 0) {
+    if (empty($due_date) || empty($status)) {
         $error = 'Please fill in all required fields';
     } else {
-        $total = ($amount - $discount) + $tax;
-        $invoice_number = generateInvoiceNumber();
+        $total = ($invoice['amount'] - $discount) + $tax;
 
-        $query = "INSERT INTO invoices (invoice_number, customer_id, billing_id, issue_date, due_date, amount, discount, tax, total, status, payment_status, notes) 
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Draft', 'Unpaid', ?)";
+        $update_query = "UPDATE invoices SET due_date = ?, discount = ?, tax = ?, total = ?, status = ?, notes = ? WHERE id = ?";
+        $stmt = $conn->prepare($update_query);
         
-        $stmt = $conn->prepare($query);
         if ($stmt) {
-            $stmt->bind_param('siissdddds', $invoice_number, $customer_id, $billing_id, $issue_date, $due_date, $amount, $discount, $tax, $total, $notes);
+            $stmt->bind_param('sdddssi', $due_date, $discount, $tax, $total, $status, $notes, $invoice_id);
             
             if ($stmt->execute()) {
-                $invoice_id = $conn->insert_id;
-                logAudit($conn, $_SESSION['admin_id'], 'Create Invoice', 'invoices', $invoice_id, null, ['invoice_number' => $invoice_number]);
-                $success = 'Invoice created successfully!';
-                header('Location: view.php?id=' . $invoice_id);
-                exit();
+                logAudit($conn, $_SESSION['admin_id'], 'Update Invoice', 'invoices', $invoice_id, $invoice, ['due_date' => $due_date, 'status' => $status]);
+                $success = 'Invoice updated successfully!';
+                
+                // Refresh invoice data
+                $stmt = $conn->prepare($query);
+                $stmt->bind_param('i', $invoice_id);
+                $stmt->execute();
+                $invoice = $stmt->get_result()->fetch_assoc();
             } else {
-                $error = 'Error creating invoice: ' . $stmt->error;
+                $error = 'Error updating invoice: ' . $stmt->error;
             }
         } else {
             $error = 'Database error: ' . $conn->error;
@@ -57,7 +74,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Create Invoice - <?php echo APP_NAME; ?></title>
+    <title>Edit Invoice - <?php echo APP_NAME; ?></title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
@@ -98,7 +115,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <div class="col-md-10 p-4">
                 <div class="card">
                     <div class="card-header">
-                        <h5 class="mb-0"><i class="fas fa-file-invoice-dollar"></i> Create New Invoice</h5>
+                        <h5 class="mb-0"><i class="fas fa-edit"></i> Edit Invoice #<?php echo htmlspecialchars($invoice['invoice_number']); ?></h5>
                     </div>
                     <div class="card-body">
                         <?php if (!empty($error)): ?>
@@ -107,63 +124,65 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
                             </div>
                         <?php endif; ?>
+                        
+                        <?php if (!empty($success)): ?>
+                            <div class="alert alert-success alert-dismissible fade show" role="alert">
+                                <i class="fas fa-check-circle"></i> <?php echo $success; ?>
+                                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                            </div>
+                        <?php endif; ?>
 
                         <form method="POST" class="row g-3">
-                            <div class="col-md-6">
-                                <label class="form-label">Customer *</label>
-                                <select name="customer_id" class="form-control" required onchange="updateBillingId()">
-                                    <option value="">-- Select Customer --</option>
-                                    <?php foreach ($customers as $customer): ?>
-                                        <option value="<?php echo $customer['id']; ?>" data-price="<?php echo $customer['price'] ?? 0; ?>">
-                                            <?php echo htmlspecialchars($customer['customer_id'] . ' - ' . $customer['fullname']); ?>
-                                        </option>
-                                    <?php endforeach; ?>
-                                </select>
+                            <div class="col-12">
+                                <div class="alert alert-info">
+                                    <strong>Invoice Details:</strong> Amount: <?php echo formatCurrency($invoice['amount']); ?> | Current Total: <?php echo formatCurrency($invoice['total']); ?>
+                                </div>
                             </div>
 
                             <div class="col-md-6">
-                                <label class="form-label">Billing ID (Optional)</label>
-                                <input type="number" name="billing_id" class="form-control" placeholder="Leave blank to auto-generate">
-                            </div>
-
-                            <div class="col-md-6">
-                                <label class="form-label">Issue Date *</label>
-                                <input type="date" name="issue_date" class="form-control" required value="<?php echo date('Y-m-d'); ?>">
+                                <label class="form-label">Issue Date</label>
+                                <input type="date" class="form-control" value="<?php echo $invoice['issue_date']; ?>" readonly>
                             </div>
 
                             <div class="col-md-6">
                                 <label class="form-label">Due Date *</label>
-                                <input type="date" name="due_date" class="form-control" required value="<?php echo date('Y-m-d', strtotime('+30 days')); ?>">
-                            </div>
-
-                            <div class="col-md-6">
-                                <label class="form-label">Amount *</label>
-                                <input type="number" name="amount" class="form-control" step="0.01" required placeholder="0.00" id="amount" onchange="calculateTotal()">
+                                <input type="date" name="due_date" class="form-control" required value="<?php echo $invoice['due_date']; ?>">
                             </div>
 
                             <div class="col-md-6">
                                 <label class="form-label">Discount</label>
-                                <input type="number" name="discount" class="form-control" step="0.01" placeholder="0.00" id="discount" onchange="calculateTotal()">
+                                <input type="number" name="discount" class="form-control" step="0.01" value="<?php echo $invoice['discount']; ?>" id="discount" onchange="calculateTotal()">
                             </div>
 
                             <div class="col-md-6">
-                                <label class="form-label">Tax</label>
-                                <input type="number" name="tax" class="form-control" step="0.01" placeholder="0.00" id="tax" onchange="calculateTotal()">
+                                <label class="form-label">Tax (VAT)</label>
+                                <input type="number" name="tax" class="form-control" step="0.01" value="<?php echo $invoice['tax']; ?>" id="tax" onchange="calculateTotal()">
                             </div>
 
                             <div class="col-md-6">
-                                <label class="form-label">Total</label>
-                                <input type="number" class="form-control" id="total" readonly placeholder="0.00">
+                                <label class="form-label">Status *</label>
+                                <select name="status" class="form-control" required>
+                                    <option value="Draft" <?php echo $invoice['status'] === 'Draft' ? 'selected' : ''; ?>>Draft</option>
+                                    <option value="Sent" <?php echo $invoice['status'] === 'Sent' ? 'selected' : ''; ?>>Sent</option>
+                                    <option value="Paid" <?php echo $invoice['status'] === 'Paid' ? 'selected' : ''; ?>>Paid</option>
+                                    <option value="Overdue" <?php echo $invoice['status'] === 'Overdue' ? 'selected' : ''; ?>>Overdue</option>
+                                    <option value="Cancelled" <?php echo $invoice['status'] === 'Cancelled' ? 'selected' : ''; ?>>Cancelled</option>
+                                </select>
+                            </div>
+
+                            <div class="col-md-6">
+                                <label class="form-label">New Total</label>
+                                <input type="number" class="form-control" id="total" readonly value="<?php echo $invoice['total']; ?>">
                             </div>
 
                             <div class="col-12">
                                 <label class="form-label">Notes</label>
-                                <textarea name="notes" class="form-control" rows="3" placeholder="Add any notes for this invoice"></textarea>
+                                <textarea name="notes" class="form-control" rows="3"><?php echo htmlspecialchars($invoice['notes'] ?? ''); ?></textarea>
                             </div>
 
                             <div class="col-12">
-                                <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Create Invoice</button>
-                                <a href="index.php" class="btn btn-secondary"><i class="fas fa-times"></i> Cancel</a>
+                                <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Update Invoice</button>
+                                <a href="view.php?id=<?php echo $invoice['id']; ?>" class="btn btn-secondary"><i class="fas fa-times"></i> Cancel</a>
                             </div>
                         </form>
                     </div>
@@ -175,7 +194,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script>
         function calculateTotal() {
-            const amount = parseFloat(document.getElementById('amount').value) || 0;
+            const amount = <?php echo $invoice['amount']; ?>;
             const discount = parseFloat(document.getElementById('discount').value) || 0;
             const tax = parseFloat(document.getElementById('tax').value) || 0;
             const total = (amount - discount) + tax;
