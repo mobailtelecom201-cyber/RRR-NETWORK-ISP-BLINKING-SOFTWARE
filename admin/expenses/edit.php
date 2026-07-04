@@ -6,8 +6,26 @@ require_once '../../includes/functions.php';
 
 checkPermission([ROLE_SUPER_ADMIN, ROLE_ADMIN]);
 
+$expense_id = intval($_GET['id'] ?? 0);
 $error = '';
-$success = '';
+
+if ($expense_id <= 0) {
+    header('Location: index.php');
+    exit();
+}
+
+$query = "SELECT * FROM expenses WHERE id = ?";
+$stmt = $conn->prepare($query);
+$stmt->bind_param('i', $expense_id);
+$stmt->execute();
+$result = $stmt->get_result();
+
+if ($result->num_rows === 0) {
+    header('Location: index.php');
+    exit();
+}
+
+$expense = $result->fetch_assoc();
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $category = sanitizeInput($_POST['category'] ?? '');
@@ -18,21 +36,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (empty($category) || empty($description) || $amount <= 0 || empty($expense_date)) {
         $error = 'Please fill in all required fields';
     } else {
-        $query = "INSERT INTO expenses (category, description, amount, expense_date, status) VALUES (?, ?, ?, ?, 'Pending')";
-        $stmt = $conn->prepare($query);
+        $update_query = "UPDATE expenses SET category = ?, description = ?, amount = ?, expense_date = ? WHERE id = ?";
+        $stmt = $conn->prepare($update_query);
+        $stmt->bind_param('ssdsi', $category, $description, $amount, $expense_date, $expense_id);
         
-        if ($stmt) {
-            $stmt->bind_param('ssds', $category, $description, $amount, $expense_date);
-            
-            if ($stmt->execute()) {
-                $expense_id = $conn->insert_id;
-                logAudit($conn, $_SESSION['admin_id'], 'Create Expense', 'expenses', $expense_id, null, ['category' => $category, 'amount' => $amount]);
-                $success = 'Expense added successfully!';
-                header('Location: index.php');
-                exit();
-            } else {
-                $error = 'Error adding expense: ' . $stmt->error;
-            }
+        if ($stmt->execute()) {
+            logAudit($conn, $_SESSION['admin_id'], 'Update Expense', 'expenses', $expense_id, $expense, ['category' => $category, 'amount' => $amount]);
+            header('Location: view.php?id=' . $expense_id . '&success=Expense updated');
+            exit();
+        } else {
+            $error = 'Error updating expense: ' . $stmt->error;
         }
     }
 }
@@ -42,7 +55,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Add Expense - <?php echo APP_NAME; ?></title>
+    <title>Edit Expense - <?php echo APP_NAME; ?></title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
@@ -82,7 +95,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <div class="col-md-10 p-4">
                 <div class="card">
                     <div class="card-header">
-                        <h5 class="mb-0"><i class="fas fa-plus"></i> Add New Expense</h5>
+                        <h5 class="mb-0"><i class="fas fa-edit"></i> Edit Expense</h5>
                     </div>
                     <div class="card-body">
                         <?php if (!empty($error)): ?>
@@ -95,27 +108,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         <form method="POST" class="row g-3">
                             <div class="col-md-6">
                                 <label class="form-label">Category *</label>
-                                <input type="text" name="category" class="form-control" required placeholder="e.g., Office Rent, Utilities">
+                                <input type="text" name="category" class="form-control" required value="<?php echo htmlspecialchars($expense['category']); ?>">
                             </div>
 
                             <div class="col-md-6">
                                 <label class="form-label">Amount (BDT) *</label>
-                                <input type="number" name="amount" class="form-control" step="0.01" required placeholder="0.00">
+                                <input type="number" name="amount" class="form-control" step="0.01" required value="<?php echo $expense['amount']; ?>">
                             </div>
 
                             <div class="col-md-6">
                                 <label class="form-label">Expense Date *</label>
-                                <input type="date" name="expense_date" class="form-control" required value="<?php echo date('Y-m-d'); ?>">
+                                <input type="date" name="expense_date" class="form-control" required value="<?php echo $expense['expense_date']; ?>">
                             </div>
 
                             <div class="col-12">
                                 <label class="form-label">Description *</label>
-                                <textarea name="description" class="form-control" rows="3" required placeholder="Detailed description of the expense"></textarea>
+                                <textarea name="description" class="form-control" rows="3" required><?php echo htmlspecialchars($expense['description']); ?></textarea>
                             </div>
 
                             <div class="col-12">
-                                <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Add Expense</button>
-                                <a href="index.php" class="btn btn-secondary"><i class="fas fa-times"></i> Cancel</a>
+                                <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Update Expense</button>
+                                <a href="view.php?id=<?php echo $expense['id']; ?>" class="btn btn-secondary"><i class="fas fa-times"></i> Cancel</a>
                             </div>
                         </form>
                     </div>

@@ -4,33 +4,37 @@ require_once '../../config/database.php';
 require_once '../../config/constants.php';
 require_once '../../includes/functions.php';
 
-checkPermission([ROLE_SUPER_ADMIN]);
+checkPermission([ROLE_SUPER_ADMIN, ROLE_ADMIN]);
 
-$error = '';
 $success = '';
+$error = '';
 
 // Get current settings
-$app_name = getSetting($conn, 'APP_NAME') ?? APP_NAME;
-$app_email = getSetting($conn, 'APP_EMAIL') ?? '';
-$app_phone = getSetting($conn, 'APP_PHONE') ?? '';
-$bkash_key = getSetting($conn, 'BKASH_API_KEY') ?? '';
-$nagad_key = getSetting($conn, 'NAGAD_API_KEY') ?? '';
-$rocket_key = getSetting($conn, 'ROCKET_API_KEY') ?? '';
-$sms_gateway = getSetting($conn, 'SMS_GATEWAY_API') ?? '';
+$company_name = getSetting($conn, 'company_name') ?? 'RRR Network ISP';
+$company_email = getSetting($conn, 'company_email') ?? 'info@example.com';
+$company_phone = getSetting($conn, 'company_phone') ?? '+880';
+$company_address = getSetting($conn, 'company_address') ?? '';
+$sms_gateway_api = getSetting($conn, 'sms_gateway_api') ?? '';
+$email_from = getSetting($conn, 'email_from') ?? 'noreply@example.com';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $setting_name = $_POST['setting_name'] ?? '';
-    $setting_value = $_POST['setting_value'] ?? '';
-    
-    if (empty($setting_name) || empty($setting_value)) {
-        $error = 'Please fill in all fields';
-    } else {
-        if (updateSetting($conn, $setting_name, $setting_value)) {
-            $success = 'Setting updated successfully';
-        } else {
-            $error = 'Error updating setting';
-        }
-    }
+    $company_name = sanitizeInput($_POST['company_name'] ?? '');
+    $company_email = sanitizeInput($_POST['company_email'] ?? '');
+    $company_phone = sanitizeInput($_POST['company_phone'] ?? '');
+    $company_address = sanitizeInput($_POST['company_address'] ?? '');
+    $sms_gateway_api = sanitizeInput($_POST['sms_gateway_api'] ?? '');
+    $email_from = sanitizeInput($_POST['email_from'] ?? '');
+
+    // Update settings
+    updateSetting($conn, 'company_name', $company_name);
+    updateSetting($conn, 'company_email', $company_email);
+    updateSetting($conn, 'company_phone', $company_phone);
+    updateSetting($conn, 'company_address', $company_address);
+    updateSetting($conn, 'sms_gateway_api', $sms_gateway_api);
+    updateSetting($conn, 'email_from', $email_from);
+
+    logAudit($conn, $_SESSION['admin_id'], 'Update Settings', 'settings', 0, null, null);
+    $success = 'Settings updated successfully!';
 }
 ?>
 <!DOCTYPE html>
@@ -48,9 +52,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         .sidebar a.active { background: #34495e; border-left-color: #3498db; }
         .card { border: none; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-radius: 8px; }
         .card-header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; }
-        .nav-tabs { border-bottom: 2px solid #ddd; }
-        .nav-tabs .nav-link { color: #667eea; border: none; }
-        .nav-tabs .nav-link.active { color: white; background: #667eea; border-radius: 5px; }
+        .nav-tabs { border-bottom: 2px solid #eee; }
+        .nav-tabs .nav-link.active { border-bottom: 3px solid #667eea; color: #667eea; }
     </style>
 </head>
 <body>
@@ -67,104 +70,95 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <div class="row">
             <div class="col-md-2 sidebar">
                 <a href="../../admin/dashboard.php"><i class="fas fa-chart-line"></i> Dashboard</a>
+                <a href="../../admin/customers/index.php"><i class="fas fa-users"></i> Customers</a>
+                <a href="../../admin/packages/index.php"><i class="fas fa-box"></i> Packages</a>
+                <a href="../../admin/billing/index.php"><i class="fas fa-file-invoice"></i> Invoices</a>
+                <a href="../../admin/payments/index.php"><i class="fas fa-money-bill"></i> Payments</a>
+                <a href="../../admin/mikrotik/index.php"><i class="fas fa-rss"></i> MikroTik</a>
+                <a href="../../admin/sms/index.php"><i class="fas fa-sms"></i> SMS</a>
+                <a href="../../admin/expenses/index.php"><i class="fas fa-wallet"></i> Expenses</a>
+                <a href="../../admin/reports/index.php"><i class="fas fa-chart-bar"></i> Reports</a>
                 <a href="../../admin/settings/index.php" class="active"><i class="fas fa-cog"></i> Settings</a>
             </div>
             
             <div class="col-md-10 p-4">
                 <div class="card">
                     <div class="card-header">
-                        <h5 class="mb-0">System Settings</h5>
+                        <h5 class="mb-0"><i class="fas fa-cog"></i> System Settings</h5>
                     </div>
                     <div class="card-body">
-                        <?php if ($error): ?>
-                            <div class="alert alert-danger"><?php echo $error; ?></div>
-                        <?php endif; ?>
-                        <?php if ($success): ?>
-                            <div class="alert alert-success"><?php echo $success; ?></div>
-                        <?php endif; ?>
-                        
-                        <ul class="nav nav-tabs mb-4" role="tablist">
-                            <li class="nav-item"><a class="nav-link active" data-bs-toggle="tab" href="#general">General</a></li>
-                            <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#payment">Payment Gateway</a></li>
-                            <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#sms">SMS Configuration</a></li>
-                        </ul>
-                        
-                        <div class="tab-content">
-                            <div id="general" class="tab-pane fade show active">
-                                <form method="POST" action="">
-                                    <input type="hidden" name="setting_name" value="APP_NAME">
-                                    <div class="mb-3">
-                                        <label class="form-label">Application Name</label>
-                                        <input type="text" name="setting_value" class="form-control" value="<?php echo htmlspecialchars($app_name); ?>">
-                                    </div>
-                                    <button type="submit" class="btn btn-primary">Save</button>
-                                </form>
-                                
-                                <hr>
-                                
-                                <form method="POST" action="">
-                                    <input type="hidden" name="setting_name" value="APP_EMAIL">
-                                    <div class="mb-3">
-                                        <label class="form-label">Application Email</label>
-                                        <input type="email" name="setting_value" class="form-control" value="<?php echo htmlspecialchars($app_email); ?>">
-                                    </div>
-                                    <button type="submit" class="btn btn-primary">Save</button>
-                                </form>
-                                
-                                <hr>
-                                
-                                <form method="POST" action="">
-                                    <input type="hidden" name="setting_name" value="APP_PHONE">
-                                    <div class="mb-3">
-                                        <label class="form-label">Application Phone</label>
-                                        <input type="text" name="setting_value" class="form-control" value="<?php echo htmlspecialchars($app_phone); ?>">
-                                    </div>
-                                    <button type="submit" class="btn btn-primary">Save</button>
-                                </form>
+                        <?php if (!empty($success)): ?>
+                            <div class="alert alert-success alert-dismissible fade show" role="alert">
+                                <i class="fas fa-check-circle"></i> <?php echo $success; ?>
+                                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
                             </div>
-                            
-                            <div id="payment" class="tab-pane fade">
-                                <form method="POST" action="">
-                                    <input type="hidden" name="setting_name" value="BKASH_API_KEY">
-                                    <div class="mb-3">
-                                        <label class="form-label">bKash API Key</label>
-                                        <input type="text" name="setting_value" class="form-control" value="<?php echo htmlspecialchars($bkash_key); ?>">
-                                    </div>
-                                    <button type="submit" class="btn btn-primary">Save</button>
-                                </form>
-                                
-                                <hr>
-                                
-                                <form method="POST" action="">
-                                    <input type="hidden" name="setting_name" value="NAGAD_API_KEY">
-                                    <div class="mb-3">
-                                        <label class="form-label">Nagad API Key</label>
-                                        <input type="text" name="setting_value" class="form-control" value="<?php echo htmlspecialchars($nagad_key); ?>">
-                                    </div>
-                                    <button type="submit" class="btn btn-primary">Save</button>
-                                </form>
-                                
-                                <hr>
-                                
-                                <form method="POST" action="">
-                                    <input type="hidden" name="setting_name" value="ROCKET_API_KEY">
-                                    <div class="mb-3">
-                                        <label class="form-label">Rocket API Key</label>
-                                        <input type="text" name="setting_value" class="form-control" value="<?php echo htmlspecialchars($rocket_key); ?>">
-                                    </div>
-                                    <button type="submit" class="btn btn-primary">Save</button>
-                                </form>
+                        <?php endif; ?>
+                        <?php if (!empty($error)): ?>
+                            <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                                <i class="fas fa-exclamation-circle"></i> <?php echo $error; ?>
+                                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
                             </div>
-                            
-                            <div id="sms" class="tab-pane fade">
-                                <form method="POST" action="">
-                                    <input type="hidden" name="setting_name" value="SMS_GATEWAY_API">
-                                    <div class="mb-3">
-                                        <label class="form-label">SMS Gateway API URL</label>
-                                        <input type="text" name="setting_value" class="form-control" value="<?php echo htmlspecialchars($sms_gateway); ?>">
-                                    </div>
-                                    <button type="submit" class="btn btn-primary">Save</button>
-                                </form>
+                        <?php endif; ?>
+
+                        <form method="POST" class="row g-3">
+                            <div class="col-12">
+                                <h6 class="text-muted mb-3"><i class="fas fa-building"></i> Company Information</h6>
+                            </div>
+
+                            <div class="col-md-6">
+                                <label class="form-label">Company Name</label>
+                                <input type="text" name="company_name" class="form-control" value="<?php echo htmlspecialchars($company_name); ?>">
+                            </div>
+
+                            <div class="col-md-6">
+                                <label class="form-label">Company Email</label>
+                                <input type="email" name="company_email" class="form-control" value="<?php echo htmlspecialchars($company_email); ?>">
+                            </div>
+
+                            <div class="col-md-6">
+                                <label class="form-label">Company Phone</label>
+                                <input type="text" name="company_phone" class="form-control" value="<?php echo htmlspecialchars($company_phone); ?>">
+                            </div>
+
+                            <div class="col-md-12">
+                                <label class="form-label">Company Address</label>
+                                <textarea name="company_address" class="form-control" rows="3"><?php echo htmlspecialchars($company_address); ?></textarea>
+                            </div>
+
+                            <div class="col-12" style="border-top: 1px solid #eee; padding-top: 20px; margin-top: 10px;">
+                                <h6 class="text-muted mb-3"><i class="fas fa-cog"></i> Integration Settings</h6>
+                            </div>
+
+                            <div class="col-md-12">
+                                <label class="form-label">SMS Gateway API Key</label>
+                                <input type="password" name="sms_gateway_api" class="form-control" value="<?php echo htmlspecialchars($sms_gateway_api); ?>" placeholder="Enter your SMS gateway API key">
+                                <small class="form-text text-muted">Used for sending SMS notifications</small>
+                            </div>
+
+                            <div class="col-md-12">
+                                <label class="form-label">Email From Address</label>
+                                <input type="email" name="email_from" class="form-control" value="<?php echo htmlspecialchars($email_from); ?>">
+                                <small class="form-text text-muted">Sender email for system notifications</small>
+                            </div>
+
+                            <div class="col-12">
+                                <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Save Settings</button>
+                                <a href="../../admin/dashboard.php" class="btn btn-secondary"><i class="fas fa-times"></i> Cancel</a>
+                            </div>
+                        </form>
+
+                        <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #eee;">
+                            <h6 class="text-muted mb-3"><i class="fas fa-info-circle"></i> System Information</h6>
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <p><strong>Application:</strong> <?php echo APP_NAME; ?></p>
+                                    <p><strong>Version:</strong> 1.0.0</p>
+                                    <p><strong>PHP Version:</strong> <?php echo phpversion(); ?></p>
+                                </div>
+                                <div class="col-md-6">
+                                    <p><strong>Database:</strong> Active</p>
+                                    <p><strong>Last Updated:</strong> <?php echo date('Y-m-d H:i:s'); ?></p>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -172,7 +166,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             </div>
         </div>
     </div>
-    
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
